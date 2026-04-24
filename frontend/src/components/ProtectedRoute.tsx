@@ -1,6 +1,6 @@
 import { Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import type { Role } from "@/lib/mockData";
+import type { Role } from "@/context/AuthContext";
 import { ReactNode } from "react";
 
 export const ProtectedRoute = ({

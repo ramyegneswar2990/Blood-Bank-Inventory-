@@ -5,127 +5,198 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useState } from "react";
-import { initialInventory, initialRequests, nearbyDonors } from "@/lib/mockData";
+import { useEffect, useState } from "react";
+import { type BloodGroup } from "@/lib/mockData";
 import { BloodGroupBadge } from "@/components/BloodGroupBadge";
 import { toast } from "sonner";
-import { Droplet, Users, ClipboardList, TrendingUp, Minus, Plus } from "lucide-react";
-import { DashboardHeader, StatusBadge, UrgencyBadge } from "./DonorDashboard";
+import { Droplet, Users, ClipboardList, TrendingUp, Minus, Plus, Loader2, Trash2 } from "lucide-react";
+import { DashboardHeader } from "./DonorDashboard";
+import { InventoryAPI, type BloodInventoryItem } from "@/services/api";
 
 const AdminDashboard = () => {
-  const [inventory, setInventory] = useState(initialInventory);
-  const totalUnits = inventory.reduce((s, i) => s + i.units, 0);
+  const [inventory, setInventory] = useState<BloodInventoryItem[]>([]);
+  const [loadingInv, setLoadingInv] = useState(true);
+  const totalUnits = inventory.reduce((s, i) => s + (i.units ?? 0), 0);
 
-  const adjust = (group: string, delta: number) => {
-    setInventory((inv) => inv.map((i) => i.group === group ? { ...i, units: Math.max(0, i.units + delta) } : i));
+  // New inventory form state
+  const [newItem, setNewItem] = useState({
+    bloodGroup: "O+" as BloodGroup,
+    units: 1,
+    hospitalName: "",
+    location: "",
+  });
+
+  useEffect(() => {
+    fetchInventory();
+  }, []);
+
+  const fetchInventory = async () => {
+    setLoadingInv(true);
+    try {
+      const { data } = await InventoryAPI.getAll();
+      setInventory(data);
+    } catch {
+      toast.error("Failed to load inventory.");
+    } finally {
+      setLoadingInv(false);
+    }
+  };
+
+  const handleAddInventory = async () => {
+    if (!newItem.hospitalName || !newItem.location) {
+      toast.error("Please fill hospital name and location.");
+      return;
+    }
+    try {
+      const { data } = await InventoryAPI.add(newItem);
+      setInventory((prev) => {
+        const idx = prev.findIndex((i) => i.id === data.id);
+        return idx >= 0 ? prev.map((i) => (i.id === data.id ? data : i)) : [...prev, data];
+      });
+      toast.success(`Inventory updated for ${data.bloodGroup}.`);
+    } catch {
+      toast.error("Failed to update inventory.");
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    try {
+      await InventoryAPI.remove(id);
+      setInventory((prev) => prev.filter((i) => i.id !== id));
+      toast("Inventory record deleted.");
+    } catch {
+      toast.error("Failed to delete record.");
+    }
   };
 
   return (
     <div className="min-h-screen bg-muted/30">
       <Navbar />
       <div className="container py-10">
-        <DashboardHeader title="Admin dashboard" subtitle="Monitor inventory, users, and requests across the network." />
+        <DashboardHeader
+          title="Admin dashboard"
+          subtitle="Monitor inventory, users, and requests across the network."
+        />
 
+        {/* Stats */}
         <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard icon={Droplet} label="Total units" value={totalUnits} accent />
-          <StatCard icon={Users} label="Donors" value={1284} />
-          <StatCard icon={ClipboardList} label="Open requests" value={initialRequests.filter(r => r.status === "Pending").length} />
-          <StatCard icon={TrendingUp} label="Donations / week" value={147} />
+          <StatCard icon={Users} label="Donors" value={inventory.length} />
+          <StatCard icon={ClipboardList} label="Inventory records" value={inventory.length} />
+          <StatCard icon={TrendingUp} label="Blood groups tracked" value={new Set(inventory.map((i) => i.bloodGroup)).size} />
         </div>
 
         <Tabs defaultValue="inventory" className="space-y-6">
           <TabsList>
             <TabsTrigger value="inventory">Inventory</TabsTrigger>
-            <TabsTrigger value="requests">Requests</TabsTrigger>
-            <TabsTrigger value="users">Users</TabsTrigger>
+            <TabsTrigger value="add">Add / Update</TabsTrigger>
           </TabsList>
 
+          {/* ── Inventory list ── */}
           <TabsContent value="inventory">
             <Card className="border-border/60 bg-card p-6 shadow-soft">
+              {loadingInv ? (
+                <div className="flex items-center justify-center py-16">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+              ) : inventory.length === 0 ? (
+                <p className="py-10 text-center text-sm text-muted-foreground">
+                  No inventory records. Use the "Add / Update" tab to add some.
+                </p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Group</TableHead>
+                      <TableHead>Units</TableHead>
+                      <TableHead>Hospital</TableHead>
+                      <TableHead>Location</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {inventory.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell>
+                          <BloodGroupBadge group={item.bloodGroup as BloodGroup} size="sm" />
+                        </TableCell>
+                        <TableCell>
+                          <span className={`font-bold ${item.units < 10 ? "text-destructive" : ""}`}>
+                            {item.units}
+                          </span>
+                          {item.units < 10 && (
+                            <Badge variant="destructive" className="ml-2 text-xs">Low</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="font-medium">{item.hospitalName}</TableCell>
+                        <TableCell className="text-muted-foreground">{item.location}</TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => item.id !== undefined && handleDelete(item.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </Card>
+          </TabsContent>
+
+          {/* ── Add / Update inventory ── */}
+          <TabsContent value="add">
+            <Card className="border-border/60 bg-card p-6 shadow-soft">
+              <h2 className="mb-4 text-lg font-semibold">Add or Update Inventory</h2>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {inventory.map((item) => (
-                  <div key={item.group} className="rounded-xl border border-border/60 bg-gradient-card p-4">
-                    <div className="flex items-center justify-between">
-                      <BloodGroupBadge group={item.group} />
-                      {item.units < 10 && <Badge variant="destructive">Low</Badge>}
-                    </div>
-                    <p className="mt-4 text-3xl font-bold">{item.units}</p>
-                    <p className="text-xs uppercase tracking-wider text-muted-foreground">units</p>
-                    <div className="mt-3 flex gap-2">
-                      <Button size="sm" variant="outline" className="flex-1" onClick={() => { adjust(item.group, -1); toast(`Removed 1 unit of ${item.group}`); }}>
-                        <Minus className="h-4 w-4" />
-                      </Button>
-                      <Button size="sm" variant="hero" className="flex-1" onClick={() => { adjust(item.group, 1); toast.success(`Added 1 unit of ${item.group}`); }}>
-                        <Plus className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Blood Group</label>
+                  <select
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={newItem.bloodGroup}
+                    onChange={(e) => setNewItem({ ...newItem, bloodGroup: e.target.value as BloodGroup })}
+                  >
+                    {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map((g) => (
+                      <option key={g} value={g}>{g}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Units</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={newItem.units}
+                    onChange={(e) => setNewItem({ ...newItem, units: +e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Hospital Name</label>
+                  <Input
+                    placeholder="City General"
+                    value={newItem.hospitalName}
+                    onChange={(e) => setNewItem({ ...newItem, hospitalName: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Location</label>
+                  <Input
+                    placeholder="Mumbai"
+                    value={newItem.location}
+                    onChange={(e) => setNewItem({ ...newItem, location: e.target.value })}
+                  />
+                </div>
               </div>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="requests">
-            <Card className="border-border/60 bg-card p-6 shadow-soft">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Request</TableHead>
-                    <TableHead>Patient</TableHead>
-                    <TableHead>Group</TableHead>
-                    <TableHead>Hospital</TableHead>
-                    <TableHead>Urgency</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {initialRequests.map((r) => (
-                    <TableRow key={r.id}>
-                      <TableCell className="font-mono text-xs">{r.id}</TableCell>
-                      <TableCell className="font-medium">{r.patient}</TableCell>
-                      <TableCell><BloodGroupBadge group={r.group} size="sm" /></TableCell>
-                      <TableCell className="text-muted-foreground">{r.hospital}, {r.city}</TableCell>
-                      <TableCell><UrgencyBadge urgency={r.urgency} /></TableCell>
-                      <TableCell><StatusBadge status={r.status} /></TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="users">
-            <Card className="border-border/60 bg-card p-6 shadow-soft">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <Input placeholder="Search users…" className="max-w-sm" />
-                <Badge variant="secondary">{nearbyDonors.length} shown</Badge>
-              </div>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Group</TableHead>
-                    <TableHead>City</TableHead>
-                    <TableHead>Last donation</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {nearbyDonors.map((d) => (
-                    <TableRow key={d.id}>
-                      <TableCell className="font-medium">{d.name}</TableCell>
-                      <TableCell><BloodGroupBadge group={d.group} size="sm" /></TableCell>
-                      <TableCell className="text-muted-foreground">{d.city}</TableCell>
-                      <TableCell className="text-muted-foreground">{d.lastDonation}</TableCell>
-                      <TableCell>
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${d.available ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"}`}>
-                          {d.available ? "Available" : "Unavailable"}
-                        </span>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <Button
+                variant="hero"
+                className="mt-5 flex items-center gap-2"
+                onClick={handleAddInventory}
+              >
+                <Plus className="h-4 w-4" /> Save Inventory
+              </Button>
             </Card>
           </TabsContent>
         </Tabs>
@@ -134,10 +205,24 @@ const AdminDashboard = () => {
   );
 };
 
-const StatCard = ({ icon: Icon, label, value, accent }: { icon: React.ElementType; label: string; value: number; accent?: boolean }) => (
-  <Card className={`border-border/60 p-6 shadow-soft ${accent ? "bg-gradient-primary text-primary-foreground" : "bg-card"}`}>
+const StatCard = ({
+  icon: Icon,
+  label,
+  value,
+  accent,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: number;
+  accent?: boolean;
+}) => (
+  <Card
+    className={`border-border/60 p-6 shadow-soft ${accent ? "bg-gradient-primary text-primary-foreground" : "bg-card"}`}
+  >
     <div className="flex items-center justify-between">
-      <p className={`text-sm ${accent ? "text-primary-foreground/85" : "text-muted-foreground"}`}>{label}</p>
+      <p className={`text-sm ${accent ? "text-primary-foreground/85" : "text-muted-foreground"}`}>
+        {label}
+      </p>
       <Icon className="h-5 w-5 opacity-80" />
     </div>
     <p className="mt-3 text-3xl font-bold">{value.toLocaleString()}</p>

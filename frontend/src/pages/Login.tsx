@@ -1,5 +1,5 @@
 import { useState, FormEvent } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
@@ -7,14 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
-import type { Role } from "@/lib/mockData";
+import type { Role } from "@/context/AuthContext";
 import { Heart, HeartHandshake } from "lucide-react";
 
 const Login = () => {
   const { login } = useAuth();
   const navigate = useNavigate();
-  const [params] = useSearchParams();
-  const [role, setRole] = useState<Role>((params.get("role") as Role) || "donor");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -23,11 +21,16 @@ const Login = () => {
     e.preventDefault();
     setLoading(true);
     try {
-      await login(email, password, role);
-      toast.success(`Welcome back!`);
+      // login() calls /api/auth/login and stores the JWT + user.
+      // The role is returned by the backend, so no need to pass it from the UI.
+      await login(email, password);
+      toast.success("Welcome back!");
+      // Redirect based on role stored after login
+      const raw = localStorage.getItem("bb_user");
+      const role = raw ? (JSON.parse(raw).role as Role) : "donor";
       navigate(role === "admin" ? "/admin" : role === "donor" ? "/donor" : "/receiver");
     } catch {
-      toast.error("Login failed. Please try again.");
+      toast.error("Login failed. Check your credentials.");
     } finally {
       setLoading(false);
     }
@@ -42,16 +45,28 @@ const Login = () => {
           <p className="mt-1 text-sm text-muted-foreground">Log in to continue saving lives</p>
         </div>
 
-        <RoleToggle role={role} onChange={setRole} />
-
-        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
+            <Input
+              id="email"
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+            />
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">Password</Label>
-            <Input id="password" type="password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
+            <Input
+              id="password"
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+            />
           </div>
           <Button type="submit" variant="hero" size="lg" className="w-full" disabled={loading}>
             {loading ? "Signing in…" : "Sign In"}
@@ -60,20 +75,25 @@ const Login = () => {
 
         <p className="mt-6 text-center text-sm text-muted-foreground">
           New to LifeDrop?{" "}
-          <Link to="/signup" className="font-medium text-primary hover:underline">Create an account</Link>
+          <Link to="/signup" className="font-medium text-primary hover:underline">
+            Create an account
+          </Link>
         </p>
       </Card>
     </div>
   );
 };
 
+/** Exported so Signup.tsx can reuse it. */
 export const RoleToggle = ({ role, onChange }: { role: Role; onChange: (r: Role) => void }) => (
   <div className="grid grid-cols-3 gap-2 rounded-xl bg-muted p-1.5">
-    {([
-      { value: "donor", label: "Donor", icon: Heart },
-      { value: "receiver", label: "Receiver", icon: HeartHandshake },
-      { value: "admin", label: "Admin", icon: HeartHandshake },
-    ] as const).map((r) => (
+    {(
+      [
+        { value: "donor", label: "Donor", icon: Heart },
+        { value: "receiver", label: "Receiver", icon: HeartHandshake },
+        { value: "admin", label: "Admin", icon: HeartHandshake },
+      ] as const
+    ).map((r) => (
       <button
         key={r.value}
         type="button"
